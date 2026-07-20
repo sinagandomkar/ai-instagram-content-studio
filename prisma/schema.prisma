@@ -1,0 +1,193 @@
+// Prisma schema — AI Instagram Content Studio
+// See docs/DATABASE.md for the entity rationale.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// --- Account intelligence (Composio-backed) -------------------------------
+
+model Account {
+  id                String   @id @default(cuid())
+  instagramUserId   String   @unique
+  username          String
+  displayName       String?
+  profilePictureUrl String?
+  connectedAt       DateTime @default(now())
+
+  credential             Credential?
+  snapshots              AccountSnapshot[]
+  postingRecommendations PostingRecommendation[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Credential {
+  id             String    @id @default(cuid())
+  accountId      String    @unique
+  account        Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  provider       String    @default("composio")
+  encryptedToken String
+  expiresAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model AccountSnapshot {
+  id             String   @id @default(cuid())
+  accountId      String
+  account        Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  followers      Int
+  following      Int
+  postsCount     Int
+  engagementRate Float
+  capturedAt     DateTime @default(now())
+
+  @@index([accountId, capturedAt])
+}
+
+// --- Viral Content Engine ---------------------------------------------------
+
+model Reel {
+  id                  String    @id @default(cuid())
+  externalId          String    @unique
+  niche               String
+  source              String // ProviderId: composio | curated-library | user-imported | browser-automation | commercial-provider
+  confidence          String // "verified" | "estimated"
+  creatorUsername     String
+  thumbnailUrl        String?
+  videoUrl            String
+  views               Int?
+  likes               Int?
+  comments            Int?
+  publishDate         DateTime?
+  estimatedEngagement Float?
+  transcript          String?
+  fetchedAt           DateTime  @default(now())
+
+  snapshots        ReelSnapshot[]
+  generatedContent GeneratedContent[]
+  storySequences   StorySequence[]
+  commentRecords   Comment[]
+  savedAs          SavedLibraryItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([niche])
+}
+
+model ReelSnapshot {
+  id         String   @id @default(cuid())
+  reelId     String
+  reel       Reel     @relation(fields: [reelId], references: [id], onDelete: Cascade)
+  views      Int?
+  likes      Int?
+  comments   Int?
+  capturedAt DateTime @default(now())
+
+  @@index([reelId, capturedAt])
+}
+
+// --- AI generation -----------------------------------------------------------
+
+model GeneratedContent {
+  id            String   @id @default(cuid())
+  reelId        String?
+  reel          Reel?    @relation(fields: [reelId], references: [id], onDelete: Cascade)
+  type          String // script | hook | caption | hashtags | recording-tips | cover-title | keywords | why-viral | audience-analysis | carousel
+  content       String // JSON-encoded payload (shape depends on `type`)
+  promptVersion String
+  createdAt     DateTime @default(now())
+
+  @@index([reelId, type])
+}
+
+model StorySequence {
+  id        String       @id @default(cuid())
+  reelId    String?
+  reel      Reel?        @relation(fields: [reelId], references: [id], onDelete: Cascade)
+  frames    StoryFrame[]
+  createdAt DateTime     @default(now())
+}
+
+model StoryFrame {
+  id              String        @id @default(cuid())
+  storySequenceId String
+  storySequence   StorySequence @relation(fields: [storySequenceId], references: [id], onDelete: Cascade)
+  order           Int
+  text            String?
+  visualIdea      String?
+  poll            String? // JSON: { question, options }
+  questionBox     String?
+  cta             String?
+  sticker         String?
+
+  @@index([storySequenceId, order])
+}
+
+// --- Comment intelligence -----------------------------------------------------
+
+model Comment {
+  id             String   @id @default(cuid())
+  reelId         String
+  reel           Reel     @relation(fields: [reelId], references: [id], onDelete: Cascade)
+  authorUsername String?
+  text           String
+  sentiment      String? // "positive" | "negative" | "neutral"
+  source         String // "composio" | "imported"
+  createdAt      DateTime @default(now())
+
+  @@index([reelId])
+}
+
+model CommentInsight {
+  id                String   @id @default(cuid())
+  reelId            String   @unique
+  painPoints        String // JSON string[]
+  repeatedQuestions String // JSON string[]
+  desiredTopics     String // JSON string[]
+  sentimentSplit    String // JSON { positive, negative, neutral }
+  generatedAt       DateTime @default(now())
+}
+
+// --- Posting recommendations --------------------------------------------------
+
+model PostingRecommendation {
+  id          String   @id @default(cuid())
+  accountId   String
+  account     Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  bestDays    String // JSON string[]
+  bestHours   String // JSON string[]
+  frequency   String
+  reasoning   String
+  generatedAt DateTime @default(now())
+
+  @@index([accountId])
+}
+
+// --- Library & settings ---------------------------------------------------------
+
+model SavedLibraryItem {
+  id      String   @id @default(cuid())
+  reelId  String
+  reel    Reel     @relation(fields: [reelId], references: [id], onDelete: Cascade)
+  notes   String?
+  savedAt DateTime @default(now())
+
+  @@unique([reelId])
+}
+
+model Settings {
+  id                  Int      @id @default(1)
+  researchModeEnabled Boolean  @default(false)
+  theme               String   @default("system") // "system" | "light" | "dark"
+  updatedAt           DateTime @updatedAt
+}
