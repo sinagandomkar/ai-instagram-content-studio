@@ -3,8 +3,12 @@ import type { AIProvider } from "@/src/domain/ports/ai-provider";
 import type { GenerationRequest, GenerationResult } from "@/src/domain/entities/generation";
 import { buildGenerationPrompt, PROMPT_VERSION } from "./prompts";
 
-/** Free-tier-friendly default; swappable per request if a task ever needs the heavier model. */
-const DEFAULT_MODEL = "gemini-2.5-flash";
+// "gemini-2.5-flash" is still listed by the models.list endpoint but returns a 404
+// ("no longer available to new users") on generateContent for keys created after
+// Google's cutover — found live, with a real key, while testing this build. The
+// "-latest" alias avoids re-hardcoding a model name that can be deprecated later;
+// Google keeps it pointed at their current recommended flash model.
+const DEFAULT_MODEL = "gemini-flash-latest";
 
 let client: GoogleGenAI | undefined;
 
@@ -33,6 +37,9 @@ export class GeminiProvider implements AIProvider {
         responseMimeType: "application/json",
         responseSchema,
         temperature: 0.8,
+        // Fails fast instead of hanging the whole request — hit Gemini's real
+        // "high demand" 503s taking ~30s to eventually resolve while testing this.
+        httpOptions: { timeout: 15_000 },
       },
     });
 

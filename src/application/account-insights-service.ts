@@ -41,15 +41,23 @@ export class AccountInsightsService {
       take: 90,
     });
 
-    const summary =
-      `دنبال‌کننده: ${result.data.followers}، نرخ تعامل: ${(result.data.engagementRate * 100).toFixed(1)}٪، ` +
-      `تعداد پست: ${result.data.postsCount}، برترین ریلز: ${result.data.topReels[0]?.likes ?? 0} لایک`;
-    const suggestionResult = await aiProvider.generate({
-      task: "account-suggestions",
-      context: { accountSummary: summary },
-      language: "fa",
-    });
-    const suggestions = (suggestionResult.output as { suggestions?: string[] }).suggestions ?? [];
+    // AI suggestions are a nice-to-have on top of real account data — a Gemini
+    // hiccup (rate limit, transient 503, etc.; hit live while testing this) must
+    // not take down the whole dashboard when the actual Instagram data is fine.
+    let suggestions: string[] = [];
+    try {
+      const summary =
+        `دنبال‌کننده: ${result.data.followers}، نرخ تعامل: ${(result.data.engagementRate * 100).toFixed(1)}٪، ` +
+        `تعداد پست: ${result.data.postsCount}، برترین ریلز: ${result.data.topReels[0]?.likes ?? 0} لایک`;
+      const suggestionResult = await aiProvider.generate({
+        task: "account-suggestions",
+        context: { accountSummary: summary },
+        language: "fa",
+      });
+      suggestions = (suggestionResult.output as { suggestions?: string[] }).suggestions ?? [];
+    } catch (error) {
+      console.error("Account suggestions generation failed (non-fatal):", error);
+    }
 
     return {
       connected: true,

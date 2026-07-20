@@ -95,11 +95,20 @@ export class ComposioProvider implements ContentDiscoveryProvider {
     const result = await client.tools.execute(INSTAGRAM_ACTIONS.getUserMedia, {
       userId: LOCAL_COMPOSIO_USER_ID,
       arguments: { ig_user_id: "me", limit },
+      // V1 doesn't pin toolkit versions (docs/PROMPT_LIBRARY.md-style version pinning is
+      // for prompts, not this) — Composio requires either an explicit version or this flag
+      // for manual tool execution; found live when a real OAuth connection completion
+      // threw TS-SDK::TOOL_VERSION_REQUIRED. Revisit if toolkit updates ever break a call.
+      dangerouslySkipVersionCheck: true,
     });
     if (!result.successful) throw new Error(result.error ?? "INSTAGRAM_GET_IG_USER_MEDIA failed");
 
-    // Response is nested under data.data per Composio's documented shape for this action.
-    const raw = (result.data as { data?: { data?: IgMediaItem[] } }).data?.data ?? [];
+    // result.data is Composio's envelope; its own .data field is the Instagram Graph
+    // API's standard {data: [...], paging: {...}} response, so the array is one level
+    // down — not double-nested under data.data.data as an earlier assumption had it
+    // (Composio's docs describe that double-nesting for a *different*, deprecated
+    // action). Confirmed against a real response from a live connected account.
+    const raw = (result.data as { data?: IgMediaItem[] }).data ?? [];
     return raw;
   }
 
@@ -112,6 +121,7 @@ export class ComposioProvider implements ContentDiscoveryProvider {
       client.tools.execute(INSTAGRAM_ACTIONS.getUserInfo, {
         userId: LOCAL_COMPOSIO_USER_ID,
         arguments: { ig_user_id: "me" },
+        dangerouslySkipVersionCheck: true,
       }),
       client.tools.execute(INSTAGRAM_ACTIONS.getUserInsights, {
         userId: LOCAL_COMPOSIO_USER_ID,
@@ -121,6 +131,7 @@ export class ComposioProvider implements ContentDiscoveryProvider {
           period: "day",
           metric_type: "total_value",
         },
+        dangerouslySkipVersionCheck: true,
       }),
       this.fetchMedia(50),
     ]);
@@ -195,14 +206,17 @@ export class ComposioProvider implements ContentDiscoveryProvider {
     const result = await client.tools.execute(INSTAGRAM_ACTIONS.getMediaComments, {
       userId: LOCAL_COMPOSIO_USER_ID,
       arguments: { ig_media_id: postExternalId },
+      dangerouslySkipVersionCheck: true,
     });
     if (!result.successful) {
       throw new Error(result.error ?? "INSTAGRAM_GET_IG_MEDIA_COMMENTS failed");
     }
 
+    // Same envelope shape as fetchMedia() above (result.data.data is the array
+    // directly) — not verified live for this specific action yet, but inferred
+    // from the confirmed shape of the sibling media-list action.
     const raw =
-      (result.data as { data?: { data?: { id: string; username?: string; text: string }[] } })
-        .data?.data ?? [];
+      (result.data as { data?: { id: string; username?: string; text: string }[] }).data ?? [];
 
     return {
       data: raw.map((c) => ({ externalId: c.id, authorUsername: c.username, text: c.text })),
