@@ -4,7 +4,7 @@ Scope for the current build pass (M0–M3) is what "بسازش" (build it) cover
 
 ## M0 — Foundation
 - Next.js + TS + Tailwind + shadcn/ui scaffold, RTL/dark-light theme shell.
-- Prisma + Postgres, schema from `DATABASE.md`, initial migration.
+- Prisma + SQLite, schema from `DATABASE.md`, initial migration.
 - Domain ports (`ContentDiscoveryProvider`, `AIProvider`), `ProviderRegistry`.
 - **Exit:** app boots, empty dashboard renders in Persian/RTL, DB migrates cleanly.
 

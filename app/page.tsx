@@ -100,7 +100,7 @@ export default function DashboardPage() {
           {suggestions.length === 0 ? (
             <p className="text-sm text-muted-foreground">فعلاً پیشنهادی موجود نیست.</p>
           ) : (
-            <ul className="list-disc space-y-2 pe-5 text-sm">
+            <ul className="list-disc space-y-2 pr-5 text-sm">
               {suggestions.map((s, i) => (
                 <li key={i}>{s}</li>
               ))}

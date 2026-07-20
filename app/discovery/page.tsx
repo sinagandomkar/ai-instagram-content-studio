@@ -66,7 +66,7 @@ export default function DiscoveryPage() {
             onChange={(e) => setNiche(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && search()}
             placeholder="مثلاً: هوش مصنوعی، فیتنس، املاک..."
-            className="pe-9"
+            className="pr-9"
           />
         </div>
         <Select value={sort} onValueChange={(v) => setSort(v as ReelSortOption)}>

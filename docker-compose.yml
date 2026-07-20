@@ -1,29 +1,16 @@
 services:
-  # Self-hosted Postgres for the Docker path. Skip this service (and point
-  # DATABASE_URL at Supabase instead) if you'd rather not run your own DB.
-  db:
-    image: postgres:16-alpine
-    environment:
-      - POSTGRES_USER=studio
-      - POSTGRES_PASSWORD=studio
-      - POSTGRES_DB=studio
-    volumes:
-      - pg-data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
-
-  # Applies pending migrations. Uses the `builder` stage (full `node_modules`,
-  # including the `prisma` CLI — a devDependency not present in the slim
-  # runner image) — see Dockerfile.
+  # Applies pending migrations to the shared SQLite volume. Uses the `builder`
+  # stage (not the slim runner) because the Prisma CLI is a devDependency and
+  # isn't part of the standalone runtime image — see Dockerfile.
   migrate:
     build:
       context: .
       target: builder
     command: npx prisma migrate deploy
     environment:
-      - DATABASE_URL=postgresql://studio:studio@db:5432/studio
-    depends_on:
-      - db
+      - DATABASE_URL=file:/data/dev.db
+    volumes:
+      - sqlite-data:/data
 
   app:
     build:
@@ -31,14 +18,16 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - DATABASE_URL=postgresql://studio:studio@db:5432/studio
+      - SQLITE_DB_PATH=/data/dev.db
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - COMPOSIO_API_KEY=${COMPOSIO_API_KEY:-}
       - COMPOSIO_INSTAGRAM_AUTH_CONFIG_ID=${COMPOSIO_INSTAGRAM_AUTH_CONFIG_ID:-}
       - COMPOSIO_USER_ID=${COMPOSIO_USER_ID:-local-user}
+    volumes:
+      - sqlite-data:/data
     depends_on:
       migrate:
         condition: service_completed_successfully
 
 volumes:
-  pg-data:
+  sqlite-data:

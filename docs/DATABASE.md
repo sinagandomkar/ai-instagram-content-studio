@@ -1,6 +1,6 @@
 # Database Design — AI Instagram Content Studio
 
-**Engine:** Postgres (Supabase free tier, or self-hosted via Docker) via Prisma ORM. V1 originally targeted local-first SQLite (PRD §8); switched to Postgres when the decision was made to deploy on Vercel, whose serverless filesystem can't host a SQLite file — see `docs/DEPLOYMENT.md`.
+**Engine:** SQLite (local-first, V1 — PRD §8) via Prisma ORM. Swappable to Postgres (Supabase free tier) for a permanent hosted deployment on Vercel, whose serverless filesystem can't host a SQLite file — see `docs/DEPLOYMENT.md` §4 for exactly what that swap involves.
 
 Full schema lives at `prisma/schema.prisma`; this doc explains the *why* behind each entity and the relationships.
 
@@ -78,4 +78,4 @@ Single-row (V1, single local user) table: `researchModeEnabled` (the opt-in gate
 
 - No `User`/multi-tenant tables yet — PRD §8 scopes V1 to a single local user. Adding auth later means adding a `User` table and a `userId` foreign key to `Account`, `Settings`, and `SavedLibraryItem`; the schema is written so that's an additive migration, not a redesign.
 - No `Niche` entity — niche is a plain string on `Reel` for V1. Promote to its own table only if/when tagging one Reel under multiple niches or niche-level analytics is actually needed (KISS/YAGNI).
-- `GeneratedContent.content` and `CommentInsight`'s list fields are stored as JSON text columns rather than normalized child tables or native `jsonb`, since they're read as a whole and never queried by sub-field in V1 — revisit as `jsonb` (Postgres has native support, unlike the SQLite this schema originally targeted) if that changes.
+- `GeneratedContent.content` and `CommentInsight`'s list fields are stored as JSON text columns (SQLite has no native array/JSON type) rather than normalized child tables, since they're read as a whole and never queried by sub-field in V1.

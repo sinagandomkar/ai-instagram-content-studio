@@ -44,9 +44,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </nav>
       </aside>
 
-      <div className="flex min-h-screen w-full flex-col md:me-60">
-        <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b bg-background/70 px-4 backdrop-blur-xl md:px-8">
-          <span className="text-sm text-muted-foreground">
+      {/* mr- (physical), not me-: the sidebar is pinned to the physical right edge
+          (right-0 above), and this app is always RTL (no LTR mode) — the logical
+          "margin-inline-end" resolves to the LEFT side in RTL and would leave this
+          content div with no offset from the sidebar at all. */}
+      <div className="flex min-h-screen w-full flex-col md:mr-60">
+        <header className="sticky top-0 z-30 flex h-16 items-center justify-between gap-3 border-b bg-background/70 px-4 backdrop-blur-xl md:px-8">
+          <span className="min-w-0 truncate text-sm text-muted-foreground">
             ابزار هوش مصنوعی برای تولید محتوای اینستاگرام
           </span>
           <ThemeToggle />
