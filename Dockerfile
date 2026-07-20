@@ -1,21 +1,19 @@
-# AI Instagram Content Studio — V1 local-first Docker image (PRD §8)
+# AI Instagram Content Studio — Docker image (Postgres-backed; see docs/DEPLOYMENT.md)
 # Multi-stage build → small runtime image using Next.js `output: "standalone"`.
 
-FROM node:22-bookworm-slim AS deps
-# bookworm (glibc), not alpine: better-sqlite3's prebuilt binaries target glibc —
-# alpine (musl) would fall back to compiling from source and needs a full toolchain.
+FROM node:22-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
-FROM node:22-bookworm-slim AS builder
+FROM node:22-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npx prisma generate
 RUN npm run build
 
-FROM node:22-bookworm-slim AS runner
+FROM node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=builder /app/public ./public

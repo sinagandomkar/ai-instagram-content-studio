@@ -153,7 +153,7 @@ Architecture stays modular so new providers/MCP servers can be added later witho
 ## 8. V1 Scope (free, local-first)
 
 - **Runtime:** Next.js app, local dev/self-hosted, no forced cloud spend.
-- **DB:** SQLite via Prisma (local file). Supabase Postgres free tier as an optional swap for a permanent Vercel-hosted deployment, same schema — see `docs/DEPLOYMENT.md` §4.
+- **DB:** Postgres via Prisma (Supabase free tier, pooler connection). Originally SQLite for local-first V1; switched to Postgres to deploy on Vercel — see `docs/DEPLOYMENT.md`.
 - **AI:** Gemini API free tier, behind a provider-abstraction interface (`AIProvider`) so a paid/alternate model can be swapped later.
 - **Discovery:** import + curated library (§5 tiers 1 & 4) on by default; research-mode (tier 3) behind an explicit opt-in toggle with a rate limit and a visible disclaimer.
 - **Auth:** single local user for V1 (no multi-tenant billing yet).

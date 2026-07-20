@@ -1,85 +1,80 @@
 # Deployment Guide — AI Instagram Content Studio
 
-**Current setup: local-first (PRD §8).** SQLite, runs entirely on your own machine — no cloud account required to develop or to demo it to others. A Vercel+Postgres path exists too (§4) for a permanent, always-on public URL, but it needs a real Postgres host (Vercel's serverless filesystem can't keep a SQLite file), which is more setup than a first run needs.
+**Current setup: Postgres (Supabase) + Vercel**, for a permanent public URL that doesn't depend on any one machine being on. V1 originally targeted local-first SQLite (PRD §8); switched to Postgres so the app can run on Vercel, whose serverless functions have no persistent filesystem for a SQLite file. Local dev still works fine without deploying anywhere — see §2.
 
-## 1. Local dev
+Three real, non-obvious problems were hit getting this working and are documented here so nobody has to rediscover them:
+
+## 1. Get a Postgres database (Supabase, free tier)
+
+1. Sign up at [supabase.com](https://supabase.com), create a project, set a database password.
+2. On the project page, click **Connect** (top of the page) → **Transaction pooler** tab → copy the URI, replace `[YOUR-PASSWORD]`.
+3. **Gotcha #1 — IPv6:** Supabase's *direct* connection host (`db.<ref>.supabase.co:5432`) only has an IPv6 (AAAA) DNS record, no IPv4. On a network without IPv6 (common — hit this live, `dig`/`nslookup` confirmed no A record, and the machine had no IPv6 route at all), connecting fails outright with `P1001: Can't reach database server`, credentials and everything else notwithstanding. **Always use the pooler host** (`aws-*.pooler.supabase.com`), which is IPv4.
+4. **Gotcha #2 — TLS:** the pooler's certificate isn't in Node's default trusted CA chain. Without `?sslmode=no-verify` on the connection string, every query fails with `P1011: self-signed certificate in certificate chain`. `sslmode=require` alone is *not* enough — it enables TLS but still validates the untrusted chain. Append `?sslmode=no-verify`.
+5. **Gotcha #3 — pooler mode for migrations:** Supabase's pooler serves two modes on two ports — **transaction mode** (port `6543`, for the running app — many short-lived connections, exactly what serverless functions need) and **session mode** (port `5432` on the same pooler host, for tools like Prisma's migration engine that need session-level state). Running `prisma migrate dev`/`deploy` against the transaction-mode port can hang or fail unpredictably. **Use the session port (5432) only to run migrations**, then use the transaction port (6543) as `DATABASE_URL` for the actual app.
+
+Net result — two connection strings, same credentials, different port:
+
+```bash
+# One-time, to apply migrations:
+DATABASE_URL="postgresql://postgres.<ref>:<password>@aws-x-xx-xxxx-x.pooler.supabase.com:5432/postgres?sslmode=no-verify" npx prisma migrate deploy
+
+# In .env / Vercel env vars, for the running app:
+DATABASE_URL="postgresql://postgres.<ref>:<password>@aws-x-xx-xxxx-x.pooler.supabase.com:6543/postgres?sslmode=no-verify"
+```
+
+## 2. Local dev
 
 ```bash
 npm install
-cp .env.example .env      # fill in GEMINI_API_KEY / COMPOSIO_* — see §3. App boots fine with them empty.
-npx prisma migrate deploy # creates dev.db and applies the schema
+cp .env.example .env      # paste your Supabase connection string (§1) + API keys (§3)
+npx prisma migrate deploy # first time only — see §1's session-port note
 npm run dev
 ```
 
-Open `http://localhost:3000`.
+Open `http://localhost:3000`. `npm run build` / `npm test` work the same regardless of where the DB lives.
 
-Run the test suite: `npm test`. Type-check/build: `npx next build`.
+## 3. Deploy to Vercel
 
-## 2. Sharing your local instance with other people
+1. Push the repo to GitHub if it isn't already.
+2. [vercel.com/new](https://vercel.com/new) → import the repo. Framework preset: Next.js (auto-detected).
+3. Project Settings → Environment Variables → add the same keys as `.env.example`: `DATABASE_URL` (the **transaction pooler**, port 6543, with `?sslmode=no-verify`), `GEMINI_API_KEY`, `COMPOSIO_API_KEY`, `COMPOSIO_INSTAGRAM_AUTH_CONFIG_ID`, `COMPOSIO_USER_ID`.
+4. Deploy. Vercel's build runs `prisma generate` (via `postinstall`) but does **not** run migrations — run `prisma migrate deploy` yourself once (§1, session port) before or right after the first deploy, and again after pulling any update that adds a migration.
+5. The Composio "connect Instagram account" flow builds its OAuth callback URL from the incoming request's host — on Vercel this resolves correctly out of the box (Vercel sets `x-forwarded-host`/`x-forwarded-proto`, which `lib/request-origin.ts` prefers). This specifically did **not** work when developing behind an SSH tunnel locally (see §4) — the callback tried to redirect to `localhost:3000` instead of the public URL, right after the Instagram OAuth had actually succeeded, until that fallback was added.
 
-Your laptop stays the server — this exposes `localhost:3000` through a tunnel so anyone with the link can reach it, for as long as your machine and the tunnel process are both running. Two options, pick one:
+## 4. Local + tunnel (alternative to deploying anywhere)
 
-**localhost.run (SSH-based, no signup, used for this build's demo):**
+For sharing a local instance without deploying: `npm run dev`, then a tunnel — e.g. `ssh -R 80:localhost:3000 nokey@localhost.run` (no signup) or `cloudflared tunnel --url http://localhost:3000`. Add the tunnel's domain to `allowedDevOrigins` in `next.config.ts` (Next's dev server blocks cross-origin requests by default) and restart `npm run dev`.
 
-```bash
-ssh -R 80:localhost:3000 nokey@localhost.run
-```
+**Reality check from actually running this for a while:** free anonymous tunnels (localhost.run, Cloudflare quick tunnels) can be genuinely unstable on some networks — connections dropped repeatedly, sometimes every 1–3 minutes, regardless of keepalive settings, and every reconnect gets a new random URL. A retry loop keeps *something* running, but doesn't fix a link that goes stale between when you generate it and when someone clicks it. This is why Vercel (§3) is the actual recommended path for anything beyond quick local testing, not the tunnel.
 
-Prints a public `https://<random>.lhr.life` URL. Plain SSH tends to get through restrictive/unstable networks better than QUIC-based tunnels (see the cloudflared note below).
+## 5. Getting the other API keys (all free-tier)
 
-**Cloudflare quick tunnel (also no signup):**
-
-```bash
-cloudflared tunnel --url http://localhost:3000
-```
-
-Prints a public `https://<random>.trycloudflare.com` URL. This defaults to QUIC (UDP) for its control connection; on a network that drops/throttles UDP, it can fail to register or drop mid-session — if that happens, retry with `cloudflared tunnel --url http://localhost:3000 --protocol http2` (forces TCP) or just use the localhost.run option instead.
-
-**Either way, one config change is required:** Next's dev server blocks cross-origin requests by default (a security default, not a bug). `next.config.ts` already whitelists both tunnel domains via `allowedDevOrigins: ["*.trycloudflare.com", "*.lhr.life"]` — if you use a different tunnel provider, add its domain there too and restart `npm run dev` (this specific config only takes effect on restart, unlike most Next config).
-
-**Tradeoffs worth knowing before you rely on this:**
-
-- The URL changes every time the tunnel restarts (both providers, no free way around it without an account).
-- Nothing is reachable once your laptop sleeps, loses network, or the terminal running the tunnel closes.
-- This is fine for demos and testing; it is not what you'd point real users at long-term — for that, see §4.
-
-## 3. Getting API keys (all free-tier)
-
-**Gemini (`GEMINI_API_KEY`):** [Google AI Studio](https://aistudio.google.com/apikey) → create a key. Free tier covers V1's usage (PRD §8).
+**Gemini (`GEMINI_API_KEY`):** [Google AI Studio](https://aistudio.google.com/apikey) → create a key. **Gotcha:** `models.list` still shows `gemini-2.5-flash` as available, but `generateContent` on it returns a 404 ("no longer available to new users") for keys created after Google's cutover. Use the `gemini-flash-latest` alias instead (already the default in `src/infrastructure/ai/gemini-provider.ts`) — Google keeps it pointed at their current recommended flash model, avoiding this exact problem recurring.
 
 **Composio (`COMPOSIO_API_KEY`, `COMPOSIO_INSTAGRAM_AUTH_CONFIG_ID`):**
 
 1. Sign up at [dashboard.composio.dev](https://dashboard.composio.dev) → Settings → copy the API key.
-2. Toolkits → find **Instagram** → create an auth config (this is what authorizes *your* app to request Instagram Business/Creator account access via Composio's OAuth flow) → copy its id into `COMPOSIO_INSTAGRAM_AUTH_CONFIG_ID`.
-3. `COMPOSIO_USER_ID` can stay `local-user` — V1 is single-user (PRD §8); this is just the identifier Composio uses to scope the connection.
+2. Toolkits → **Instagram** → create an auth config → copy its id into `COMPOSIO_INSTAGRAM_AUTH_CONFIG_ID`.
+3. `COMPOSIO_USER_ID` can stay `local-user` — V1 is single-user; it's just the identifier Composio uses to scope the connection.
+4. **Gotcha:** Composio's `tools.execute()` requires either a pinned toolkit version or `dangerouslySkipVersionCheck: true` — without it, every real Instagram API call throws `TS-SDK::TOOL_VERSION_REQUIRED`. Already set on every call in `composio-provider.ts`.
 
-Without these two, the Main Dashboard (PRD §6.1), Comment Intelligence for owned content, and Posting Recommendations stay in their "connect your account" empty state — everything else (Viral Content Engine, Reel Actions, Story/Carousel generation) works independently once `GEMINI_API_KEY` is set.
+Without Composio configured, the Main Dashboard, Comment Intelligence for owned content, and Posting Recommendations stay in their "connect your account" empty state — everything else (Viral Content Engine, Reel Actions, Story/Carousel generation) works independently once `GEMINI_API_KEY` is set.
 
-## 4. A permanent, always-on deployment (optional, more setup)
+## 6. Docker (self-contained local alternative)
 
-For a real public URL that doesn't depend on your laptop being on: Vercel (free tier) + a hosted Postgres (Supabase free tier), since Vercel's serverless functions have no persistent filesystem for SQLite.
-
-This is a real code change, not just config — swap `prisma/schema.prisma`'s `datasource db { provider = "sqlite" }` to `"postgresql"`, swap `@prisma/adapter-better-sqlite3` for `@prisma/adapter-pg` in `lib/prisma.ts` (constructor takes the connection string directly: `new PrismaPg(connectionString)`, not `{ connectionString }`), point `DATABASE_URL` at Supabase, and re-run `prisma migrate dev` against it to generate fresh Postgres migrations (SQLite and Postgres migration SQL aren't interchangeable — delete `prisma/migrations/` first).
-
-**Known gotcha hit while building this:** Supabase's *direct* connection host (`db.<ref>.supabase.co:5432`) only has an IPv6 (AAAA) DNS record — no IPv4/A record. On a network without IPv6 (common on plenty of home/mobile connections), that connection will fail outright with `P1001: Can't reach database server`, even though the credentials and everything else are correct. Use the **connection pooler** string instead (Supabase dashboard → Connect → "Transaction pooler" or "Session pooler" tab), which is IPv4-compatible — port `6543` for the transaction pooler, which is also what Vercel's serverless functions should use anyway (short-lived connections per request).
-
-Once the DB is switched: push to GitHub, import the repo at [vercel.com/new](https://vercel.com/new), add the same env vars as `.env.example` (with the Postgres `DATABASE_URL`) in Project Settings, deploy, then run `npx prisma migrate deploy` once yourself against that `DATABASE_URL` (Vercel's build doesn't run migrations automatically).
-
-Research-mode discovery (`BrowserAutomationProvider`) won't work on Vercel regardless — it spawns a local `npx @playwright/mcp` child process, which serverless functions can't sustain. Leave it off in a hosted deployment.
-
-## 5. Docker (self-contained local alternative)
-
-`Dockerfile` + `docker-compose.yml` package the app with `output: "standalone"` for a small image, using the same local SQLite setup as §1 — useful if you'd rather not have Node/npm on the host at all.
+`Dockerfile` + `docker-compose.yml` package the app with Next's `output: "standalone"`. Point `DATABASE_URL` at Supabase (§1) the same way as local dev — no separate DB container needed since Postgres is already hosted.
 
 ```bash
-docker compose run --rm migrate   # applies migrations to a named volume
-docker compose up app
+docker compose run --rm migrate   # applies migrations (use the session-port URL, §1)
+docker compose up app             # runs with the transaction-port URL
 ```
 
-`migrate` runs against the `builder` build stage (full `node_modules`, including the `prisma` CLI — a devDependency, so it's deliberately not in the slim runner image). Re-run it after pulling any update that adds a migration.
+## 7. Troubleshooting
 
-## 6. Troubleshooting
-
-- **"table does not exist" errors:** migrations haven't been applied to the DB file the app is actually reading. `lib/prisma.ts` resolves the SQLite path relative to itself (not `process.cwd()`) specifically because a plain relative path caused exactly this — two different processes silently opening two different empty database files. See the comment there before changing how the path is resolved.
-- **`GEMINI_API_KEY is not configured` / `Composio is not configured`:** expected, not a bug — set the corresponding env var (§3). The app is designed to fail loudly here rather than silently returning fake data.
-- **Dashboard loads the page shell but data never arrives, no error shown:** almost always the cross-origin block from §2 — check `allowedDevOrigins` in `next.config.ts` includes your tunnel's domain, and that you restarted `npm run dev` after changing it.
+- **`P1001: Can't reach database server`:** using the direct connection host instead of the pooler (§1 gotcha #1).
+- **`P1011: self-signed certificate in certificate chain`:** missing `?sslmode=no-verify` (§1 gotcha #2).
+- **`prisma migrate dev`/`deploy` hangs or fails against a Supabase pooler URL:** you're on the transaction-mode port (6543); switch to session mode (5432) just for the migration command (§1 gotcha #3).
+- **`TS-SDK::TOOL_VERSION_REQUIRED` from a Composio call:** `dangerouslySkipVersionCheck: true` missing from that `tools.execute()` call.
+- **Gemini call fails with 404 "no longer available to new users":** you're on a deprecated pinned model name; use `gemini-flash-latest`.
+- **Dashboard loads the page shell but data never arrives, no error shown:** cross-origin block from Next's dev server (§4) — check `allowedDevOrigins` in `next.config.ts` and that you restarted `npm run dev` after changing it. Not applicable on Vercel.
+- **Composio "connect account" redirects to `localhost:3000` and fails with `ERR_SSL_PROTOCOL_ERROR`, right after OAuth visibly succeeded:** the callback URL was built from the wrong origin (fixed via `lib/request-origin.ts`, which prefers `x-forwarded-host`/`-proto`) — if you still hit this, check those headers are actually being forwarded by whatever's in front of the app (a tunnel or proxy that doesn't set them will reproduce this).

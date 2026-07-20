@@ -1,16 +1,16 @@
 services:
-  # Applies pending migrations to the shared SQLite volume. Uses the `builder`
-  # stage (not the slim runner) because the Prisma CLI is a devDependency and
-  # isn't part of the standalone runtime image — see Dockerfile.
+  # Applies pending migrations against Supabase (or any Postgres host) —
+  # use the *session*-mode pooler URL here (port 5432), not the transaction-mode
+  # one the app itself uses (port 6543) — see docs/DEPLOYMENT.md §1.
+  # Uses the `builder` stage (full `node_modules`, including the `prisma` CLI —
+  # a devDependency not present in the slim runner image).
   migrate:
     build:
       context: .
       target: builder
     command: npx prisma migrate deploy
     environment:
-      - DATABASE_URL=file:/data/dev.db
-    volumes:
-      - sqlite-data:/data
+      - DATABASE_URL=${DATABASE_URL_MIGRATE:?set to the session-pooler URL, port 5432}
 
   app:
     build:
@@ -18,16 +18,11 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - SQLITE_DB_PATH=/data/dev.db
+      - DATABASE_URL=${DATABASE_URL:?set to the transaction-pooler URL, port 6543}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - COMPOSIO_API_KEY=${COMPOSIO_API_KEY:-}
       - COMPOSIO_INSTAGRAM_AUTH_CONFIG_ID=${COMPOSIO_INSTAGRAM_AUTH_CONFIG_ID:-}
       - COMPOSIO_USER_ID=${COMPOSIO_USER_ID:-local-user}
-    volumes:
-      - sqlite-data:/data
     depends_on:
       migrate:
         condition: service_completed_successfully
-
-volumes:
-  sqlite-data:

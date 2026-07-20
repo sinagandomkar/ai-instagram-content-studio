@@ -17,7 +17,7 @@ These were picked because they're the parts of the codebase where a silent regre
 Since Vitest exercises pure logic only, the following were checked by running the actual dev server and hitting real routes end-to-end (documented here so the next person doesn't have to re-derive it):
 
 - `next build` — full production build, including Next's own route-handler type validation (catches `params: Promise<...>` mistakes vitest wouldn't).
-- `npm run dev` + `curl`: `/api/dashboard`, `/api/settings`, `/api/library` return `200` against a freshly migrated SQLite DB.
+- `npm run dev` + `curl`: `/api/dashboard`, `/api/settings`, `/api/library` return `200` against a real Supabase Postgres database — including, live, an actually-connected Instagram account through the full Composio OAuth flow.
 - `/api/discovery/import` → `/api/discovery`: a reel imported via the user-imported provider is immediately discoverable by niche, confirming the discovery→persistence→re-query loop works.
 - `/api/reels/[id]/actions/save-to-library` → `/api/library`: confirms the save flow and its read-back.
 - `/api/reels/[id]/actions/caption` without `GEMINI_API_KEY` set returns a clear `400` with a actionable message rather than a crash — confirms the "missing config fails loud, not silent" behavior.
@@ -27,7 +27,7 @@ Browser/visual verification (actually clicking through the Discovery → Reel Ac
 
 ## What's deliberately not covered yet (M4, PRD Roadmap)
 
-- Integration tests against a real (temp-file) SQLite DB for the application services — `DiscoveryService`, `ReelActionService`, etc. Pure unit tests don't touch Prisma; a proper pass should spin up a throwaway SQLite file per test run, run migrations, and test the persistence paths (upsert-by-`externalId`, snapshot creation, growth ranking) for real.
+- Integration tests against a real (throwaway) Postgres database for the application services — `DiscoveryService`, `ReelActionService`, etc. Pure unit tests don't touch Prisma; a proper pass should spin up a throwaway Postgres database per test run, run migrations, and test the persistence paths (upsert-by-`externalId`, snapshot creation, growth ranking) for real.
 - API route tests (e.g. with `next/experimental/testmode` or a simple `fetch` against a running dev server) — the manual `curl` pass above is a stand-in, not a substitute for a CI-running suite.
 - Component tests for the Reel Action Sheet / Discovery page — would need `@testing-library/react` + jsdom, deliberately deferred since the highest-value bug surface right now is backend orchestration and the provider boundary, not component rendering.
 - A smoke E2E (Playwright, once the sandbox that builds this has real network access to fetch browser binaries, or in CI) covering: niche search → open Reel Action Sheet → generate a caption → save to library → see it in Library.
