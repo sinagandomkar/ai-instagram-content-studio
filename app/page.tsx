@@ -2,6 +2,7 @@
 
 import useSWR from "swr";
 import Image from "next/image";
+import { toast } from "sonner";
 import { Line, LineChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -32,7 +33,11 @@ export default function DashboardPage() {
           onClick={async () => {
             const res = await fetch("/api/dashboard/connect");
             const json = await res.json();
-            if (json.redirectUrl) window.location.href = json.redirectUrl;
+            if (json.redirectUrl) {
+              window.location.href = json.redirectUrl;
+            } else {
+              toast.error(json.error ?? "اتصال به Composio تنظیم نشده — در تنظیمات .env کلیدها را وارد کن.");
+            }
           }}
         >
           اتصال حساب اینستاگرام
