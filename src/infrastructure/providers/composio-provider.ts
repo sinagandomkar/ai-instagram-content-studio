@@ -94,7 +94,17 @@ export class ComposioProvider implements ContentDiscoveryProvider {
 
     const result = await client.tools.execute(INSTAGRAM_ACTIONS.getUserMedia, {
       userId: LOCAL_COMPOSIO_USER_ID,
-      arguments: { ig_user_id: "me", limit },
+      arguments: {
+        ig_user_id: "me",
+        limit,
+        // Without an explicit `fields` list the Graph API returns only a small
+        // default set (id/caption/media_type/media_url/permalink/thumbnail_url) —
+        // NOT like_count, comments_count, or media_product_type. Confirmed live:
+        // every post showed 0 likes/comments and topReels was always empty,
+        // because the REELS check depends on media_product_type being present.
+        fields:
+          "id,caption,media_type,media_product_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count",
+      },
       // V1 doesn't pin toolkit versions (docs/PROMPT_LIBRARY.md-style version pinning is
       // for prompts, not this) — Composio requires either an explicit version or this flag
       // for manual tool execution; found live when a real OAuth connection completion

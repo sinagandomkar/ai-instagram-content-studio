@@ -9,7 +9,11 @@ const patchSchema = z.object({
 
 export async function GET() {
   const settings = await settingsService.get();
-  return Response.json({ settings });
+  // The toggle still saves either way, but research mode can never actually run on
+  // a serverless host (see BrowserAutomationProvider.isAvailable) — surfaced to the
+  // UI so the setting doesn't look broken when it's really just inapplicable here.
+  const researchModeSupported = !process.env.VERCEL;
+  return Response.json({ settings, researchModeSupported });
 }
 
 export async function PATCH(request: NextRequest) {

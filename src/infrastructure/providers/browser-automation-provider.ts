@@ -33,6 +33,15 @@ export class BrowserAutomationProvider implements ContentDiscoveryProvider {
   readonly capabilities: ProviderCapability[] = ["niche-discovery"];
 
   async isAvailable(): Promise<boolean> {
+    // Serverless hosts (Vercel and similar) can't sustain the local
+    // `npx @playwright/mcp` child process this provider spawns — confirmed
+    // live: enabling research mode on Vercel made /api/discovery 500 instead
+    // of a clean empty/estimated result, since the spawn fails in that
+    // environment. `VERCEL` is set automatically on every Vercel runtime
+    // (docs/DEPLOYMENT.md §4) — this provider is simply never available there,
+    // regardless of the Settings toggle.
+    if (process.env.VERCEL) return false;
+
     const settings = await prisma.settings.findUnique({ where: { id: 1 } });
     return settings?.researchModeEnabled ?? false;
   }

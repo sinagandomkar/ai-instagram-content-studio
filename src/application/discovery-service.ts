@@ -27,11 +27,21 @@ export class DiscoveryService {
 
     for (const provider of candidates) {
       if (!provider.discoverReelsByNiche) continue;
-      const result = await provider.discoverReelsByNiche(niche, {
-        sort: params.sort,
-        allowResearchMode: params.allowResearchMode,
-        limit: params.limit,
-      });
+
+      // One provider failing (e.g. research-mode's browser process erroring on a
+      // host that can't run it) must not 500 the whole request when a later
+      // provider might still answer — log and move on instead.
+      let result;
+      try {
+        result = await provider.discoverReelsByNiche(niche, {
+          sort: params.sort,
+          allowResearchMode: params.allowResearchMode,
+          limit: params.limit,
+        });
+      } catch (error) {
+        console.error(`Discovery provider "${provider.id}" failed (non-fatal):`, error);
+        continue;
+      }
       if (result.data.length === 0) continue;
 
       const saved = await this.persist(result.data);
