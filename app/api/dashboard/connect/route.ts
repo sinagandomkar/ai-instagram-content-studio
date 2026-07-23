@@ -3,10 +3,23 @@ import { accountInsightsService } from "@/src/application/account-insights-servi
 import { getPublicOrigin } from "@/lib/request-origin";
 
 export async function GET(request: NextRequest) {
-  const callbackUrl = new URL("/api/dashboard/connect/callback", getPublicOrigin(request)).toString();
+  const origin = getPublicOrigin(request);
+  const callbackUrl = new URL("/api/dashboard/connect/callback", origin).toString();
+  const dashboardUrl = new URL("/", origin).toString();
 
   try {
-    const { redirectUrl, connectionId } = await accountInsightsService.getConnectUrl(callbackUrl);
+    const { redirectUrl, connectionId } = await accountInsightsService.getConnectUrl(
+      dashboardUrl,
+      callbackUrl
+    );
+
+    // No connectionId means getConnectUrl found and completed an existing Composio
+    // connection directly (see account-insights-service.ts) — nothing to round-trip
+    // through the callback route, so no cookie needed.
+    if (!connectionId) {
+      return Response.json({ redirectUrl });
+    }
+
     return Response.json(
       { redirectUrl },
       {

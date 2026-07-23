@@ -2,7 +2,11 @@ import { prisma } from "@/lib/prisma";
 import type { AccountInsights } from "@/src/domain/entities/account-insights";
 import { aiProvider } from "@/src/infrastructure/ai";
 import { composioProvider } from "@/src/infrastructure/providers";
-import { getComposioClient, LOCAL_COMPOSIO_USER_ID } from "@/src/infrastructure/providers/composio-client";
+import {
+  getComposioClient,
+  INSTAGRAM_TOOLKIT_SLUG,
+  LOCAL_COMPOSIO_USER_ID,
+} from "@/src/infrastructure/providers/composio-client";
 
 export interface DashboardSnapshot {
   connected: boolean;
@@ -72,16 +76,40 @@ export class AccountInsightsService {
   }
 
   /**
-   * Starts the Composio-hosted OAuth flow for connecting an Instagram
-   * Business/Creator account (PRD §7.1). `COMPOSIO_INSTAGRAM_AUTH_CONFIG_ID`
-   * is created once in the Composio dashboard for the "instagram" toolkit —
-   * see docs/DEPLOYMENT.md.
+   * Composio refuses to `.link()` a second time for the same (userId, authConfigId)
+   * pair — throws "Multiple connected accounts found ... use allowMultiple" — once
+   * one connection already exists (found live: happened after reconnecting during
+   * local dev, then again against a fresh DB after switching to Postgres, since the
+   * *Composio-side* connection had already been made and outlives our own DB reset).
+   * V1 is single-account, so the right move isn't allowMultiple (piling up duplicate
+   * connections) — it's reusing the existing one.
    */
-  async getConnectUrl(callbackUrl: string): Promise<{ redirectUrl: string; connectionId: string }> {
+  private async findExistingConnection(client: NonNullable<ReturnType<typeof getComposioClient>>) {
+    const { items } = await client.connectedAccounts.list({
+      userIds: [LOCAL_COMPOSIO_USER_ID],
+      toolkitSlugs: [INSTAGRAM_TOOLKIT_SLUG],
+    });
+    return items.find((account) => account.status === "ACTIVE");
+  }
+
+  /**
+   * Starts the Composio-hosted OAuth flow for connecting an Instagram
+   * Business/Creator account (PRD §7.1), or — if one is already connected on
+   * Composio's side for this user — completes it immediately without a new
+   * OAuth round-trip. `COMPOSIO_INSTAGRAM_AUTH_CONFIG_ID` is created once in
+   * the Composio dashboard for the "instagram" toolkit — see docs/DEPLOYMENT.md.
+   */
+  async getConnectUrl(dashboardUrl: string, callbackUrl: string): Promise<{ redirectUrl: string; connectionId?: string }> {
     const client = getComposioClient();
     if (!client) throw new Error("Composio is not configured (COMPOSIO_API_KEY missing)");
     const authConfigId = process.env.COMPOSIO_INSTAGRAM_AUTH_CONFIG_ID;
     if (!authConfigId) throw new Error("COMPOSIO_INSTAGRAM_AUTH_CONFIG_ID is not configured");
+
+    const existing = await this.findExistingConnection(client);
+    if (existing) {
+      await this.completeConnection(existing.id);
+      return { redirectUrl: dashboardUrl };
+    }
 
     const connectionRequest = await client.connectedAccounts.link(
       LOCAL_COMPOSIO_USER_ID,
