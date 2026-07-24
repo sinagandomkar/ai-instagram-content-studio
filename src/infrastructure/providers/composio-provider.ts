@@ -16,6 +16,10 @@ import {
   LOCAL_COMPOSIO_USER_ID,
 } from "./composio-client";
 
+/** Confirmed live: 730 itself still gets rejected ("Metrics data is available for
+ *  the last 2 years", 400) — 729 is the actual safe boundary, tested directly. */
+const MAX_INSIGHTS_HISTORY_DAYS = 729;
+
 /** Raw Instagram Graph API media item shape, as returned (unwrapped) by INSTAGRAM_GET_IG_USER_MEDIA. */
 interface IgMediaItem {
   id: string;
@@ -233,19 +237,30 @@ export class ComposioProvider implements ContentDiscoveryProvider {
    * which only has data from whenever the account happened to get connected.
    * This is what lets the growth chart show real history predating the connection
    * (found live: Sina asked for exactly this after seeing a one-point chart the day
-   * after connecting). The Graph API gives daily *deltas*, not running totals, so
-   * `currentFollowers` (from the same getAccountInsights call) is walked backward:
-   * today's total minus each day's delta gives the previous day's total, and so on.
+   * after connecting, then for a selectable range up to 2 years). The Graph API
+   * gives daily *deltas*, not running totals, so the current total (fetched here
+   * directly — a lightweight profile call, not the full getAccountInsights, since
+   * this is called on its own whenever the chart's range changes) is walked
+   * backward: today's total minus each day's delta gives the previous day's total.
    */
-  async getFollowerHistory(
-    currentFollowers: number,
-    days = 30
-  ): Promise<ProviderResult<{ date: string; followers: number }[]>> {
+  async getFollowerHistory(days = 30): Promise<ProviderResult<{ date: string; followers: number }[]>> {
     const client = getComposioClient();
     if (!client) throw new Error("Composio client not configured");
 
+    const clampedDays = Math.min(days, MAX_INSIGHTS_HISTORY_DAYS);
+
+    const profileResult = await client.tools.execute(INSTAGRAM_ACTIONS.getUserInfo, {
+      userId: LOCAL_COMPOSIO_USER_ID,
+      arguments: { ig_user_id: "me" },
+      dangerouslySkipVersionCheck: true,
+    });
+    if (!profileResult.successful) {
+      throw new Error(profileResult.error ?? "INSTAGRAM_GET_USER_INFO failed");
+    }
+    const currentFollowers = (profileResult.data as { followers_count?: number }).followers_count ?? 0;
+
     const until = Math.floor(Date.now() / 1000);
-    const since = until - days * 24 * 3600;
+    const since = until - clampedDays * 24 * 3600;
 
     const result = await client.tools.execute(INSTAGRAM_ACTIONS.getUserInsights, {
       userId: LOCAL_COMPOSIO_USER_ID,

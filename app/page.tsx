@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import useSWR from "swr";
 import Image from "next/image";
 import { toast } from "sonner";
@@ -8,14 +9,23 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import { fetcher } from "@/lib/fetcher";
 import { formatCompactNumber, formatPercent, formatDate } from "@/lib/format";
-import type { DashboardSnapshot } from "@/src/application/account-insights-service";
+import type { DashboardSnapshot, GrowthPoint } from "@/src/application/account-insights-service";
 
 const chartConfig = {
   followers: { label: "دنبال‌کننده", color: "var(--chart-1)" },
 } satisfies ChartConfig;
+
+const RANGE_OPTIONS = [
+  { days: 30, label: "۱ ماه اخیر" },
+  { days: 90, label: "۳ ماه اخیر" },
+  { days: 180, label: "۶ ماه اخیر" },
+  { days: 365, label: "یک‌ساله" },
+  { days: 729, label: "دو ساله" },
+];
 
 export default function DashboardPage() {
   const { data, isLoading } = useSWR<DashboardSnapshot>("/api/dashboard", fetcher);
@@ -68,29 +78,7 @@ export default function DashboardPage() {
         <StatCard label="تعداد پست" value={formatCompactNumber(insights.postsCount)} />
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>روند رشد دنبال‌کننده‌ها</CardTitle>
-          <CardDescription>بر اساس هر بار بازخوانی داشبورد ثبت می‌شود</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {growthHistory.length < 2 ? (
-            <p className="text-sm text-muted-foreground">
-              برای رسم نمودار رشد، حداقل به دو بار بازخوانی داشبورد نیاز است.
-            </p>
-          ) : (
-            <ChartContainer config={chartConfig} className="h-64 w-full">
-              <LineChart data={growthHistory}>
-                <CartesianGrid vertical={false} />
-                <XAxis dataKey="capturedAt" tickFormatter={(v) => formatDate(v)} tickLine={false} axisLine={false} />
-                <YAxis tickLine={false} axisLine={false} width={40} />
-                <ChartTooltip content={<ChartTooltipContent />} />
-                <Line type="monotone" dataKey="followers" stroke="var(--color-followers)" strokeWidth={2} dot={false} />
-              </LineChart>
-            </ChartContainer>
-          )}
-        </CardContent>
-      </Card>
+      <GrowthChart initialData={growthHistory} />
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <ContentGrid title="پربازدیدترین پست‌ها" items={insights.topPosts} />
@@ -114,6 +102,68 @@ export default function DashboardPage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+function GrowthChart({ initialData }: { initialData: GrowthPoint[] }) {
+  const [days, setDays] = useState(30);
+  // The dashboard fetch already computed the 30-day range — reuse it as SWR's
+  // fallback so picking the default range doesn't trigger a visible reload.
+  const { data, isLoading } = useSWR<{ growthHistory: GrowthPoint[] }>(
+    `/api/dashboard/growth?days=${days}`,
+    fetcher,
+    { fallbackData: days === 30 ? { growthHistory: initialData } : undefined }
+  );
+  const growthHistory = data?.growthHistory ?? [];
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-start justify-between gap-3">
+        <div>
+          <CardTitle>روند رشد دنبال‌کننده‌ها</CardTitle>
+          <CardDescription>داده‌ی واقعی اینستاگرام، تا ۲ سال قابل‌دریافت است</CardDescription>
+        </div>
+        <Select value={String(days)} onValueChange={(v) => setDays(Number(v))}>
+          <SelectTrigger className="w-36">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {RANGE_OPTIONS.map((opt) => (
+              <SelectItem key={opt.days} value={String(opt.days)}>
+                {opt.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <Skeleton className="h-64 w-full" />
+        ) : growthHistory.length < 2 ? (
+          <p className="text-sm text-muted-foreground">داده‌ی کافی برای این بازه موجود نیست.</p>
+        ) : (
+          <ChartContainer config={chartConfig} className="h-64 w-full">
+            <LineChart data={growthHistory}>
+              <CartesianGrid vertical={false} />
+              <XAxis dataKey="capturedAt" tickFormatter={(v) => formatDate(v)} tickLine={false} axisLine={false} />
+              {/* Without an explicit domain, Recharts defaults the Y-axis to start at 0 —
+                  for a metric like followers, where the day-to-day change is tiny relative
+                  to the absolute value, that renders as a flat line pinned near the top.
+                  Zooming to the actual data range is what makes the trend visible. */}
+              <YAxis
+                tickLine={false}
+                axisLine={false}
+                width={48}
+                domain={["dataMin", "dataMax"]}
+                tickFormatter={(v) => formatCompactNumber(v)}
+              />
+              <ChartTooltip content={<ChartTooltipContent />} />
+              <Line type="monotone" dataKey="followers" stroke="var(--color-followers)" strokeWidth={2} dot={false} />
+            </LineChart>
+          </ChartContainer>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

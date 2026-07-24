@@ -15,6 +15,8 @@ export interface DashboardSnapshot {
   suggestions: string[];
 }
 
+export type GrowthPoint = { capturedAt: string; followers: number; engagementRate: number };
+
 /**
  * Orchestrates PRD §6.1 (Main Dashboard). All data comes from Composio —
  * the only provider that declares `own-account-insights` (see
@@ -39,39 +41,7 @@ export class AccountInsightsService {
       },
     });
 
-    const history = await prisma.accountSnapshot.findMany({
-      where: { accountId: account.id },
-      orderBy: { capturedAt: "asc" },
-      take: 90,
-    });
-
-    // Our own AccountSnapshot history only starts from whenever the account happened
-    // to get connected — useless for "show me last month" the day after connecting.
-    // Instagram's own insights history goes back up to 30 days regardless, so prefer
-    // it as the base and layer our own (more frequent, e.g. today's) snapshots on top
-    // of whatever it doesn't cover. Non-fatal: falls back to snapshot-only history if
-    // this call fails for any reason (e.g. an account below Instagram's own threshold
-    // for this metric).
-    let growthHistory: { capturedAt: string; followers: number; engagementRate: number }[] = history.map(
-      (h) => ({ capturedAt: h.capturedAt.toISOString(), followers: h.followers, engagementRate: h.engagementRate })
-    );
-    try {
-      const followerHistory = await composioProvider.getFollowerHistory(result.data.followers);
-      const instagramPoints = followerHistory.data.map((p) => ({
-        capturedAt: p.date,
-        followers: p.followers,
-        engagementRate: 0,
-      }));
-      const lastInstagramDate = instagramPoints.at(-1)?.capturedAt;
-      const newerOwnPoints = lastInstagramDate
-        ? growthHistory.filter((p) => p.capturedAt > lastInstagramDate)
-        : growthHistory;
-      growthHistory = [...instagramPoints, ...newerOwnPoints].sort((a, b) =>
-        a.capturedAt.localeCompare(b.capturedAt)
-      );
-    } catch (error) {
-      console.error("Instagram follower history fetch failed (non-fatal, using local snapshots only):", error);
-    }
+    const growthHistory = await this.getGrowthHistory(30);
 
     // AI suggestions are a nice-to-have on top of real account data — a Gemini
     // hiccup (rate limit, transient 503, etc.; hit live while testing this) must
@@ -97,6 +67,55 @@ export class AccountInsightsService {
       growthHistory,
       suggestions,
     };
+  }
+
+  /**
+   * Growth chart data for a given range (days), independent of the full dashboard
+   * fetch — Sina asked for a selectable range (1/3/6/12/24 months) after the chart
+   * defaulted to a flat-looking few points; re-fetching the whole dashboard (which
+   * also calls Gemini for suggestions) just to change the chart's window would be
+   * slow and wasteful, so this is its own path the range selector calls directly.
+   *
+   * Prefers Instagram's own insights history (real data up to 2 years back,
+   * confirmed live — see composio-provider.ts) over our own AccountSnapshot table,
+   * which only has data from whenever the account happened to get connected; our
+   * snapshots are layered on top for anything more recent than Instagram's last
+   * data point (so a same-day reading still shows). Falls back to snapshot-only
+   * history if the Instagram call fails for any reason.
+   */
+  async getGrowthHistory(days: number): Promise<GrowthPoint[]> {
+    const account = await prisma.account.findFirstOrThrow();
+
+    const ownSnapshots = await prisma.accountSnapshot.findMany({
+      where: { accountId: account.id },
+      orderBy: { capturedAt: "asc" },
+      take: 200,
+    });
+    let growthHistory: GrowthPoint[] = ownSnapshots.map((h) => ({
+      capturedAt: h.capturedAt.toISOString(),
+      followers: h.followers,
+      engagementRate: h.engagementRate,
+    }));
+
+    try {
+      const followerHistory = await composioProvider.getFollowerHistory(days);
+      const instagramPoints: GrowthPoint[] = followerHistory.data.map((p) => ({
+        capturedAt: p.date,
+        followers: p.followers,
+        engagementRate: 0,
+      }));
+      const lastInstagramDate = instagramPoints.at(-1)?.capturedAt;
+      const newerOwnPoints = lastInstagramDate
+        ? growthHistory.filter((p) => p.capturedAt > lastInstagramDate)
+        : growthHistory;
+      growthHistory = [...instagramPoints, ...newerOwnPoints].sort((a, b) =>
+        a.capturedAt.localeCompare(b.capturedAt)
+      );
+    } catch (error) {
+      console.error("Instagram follower history fetch failed (non-fatal, using local snapshots only):", error);
+    }
+
+    return growthHistory;
   }
 
   /**
