@@ -49,6 +49,28 @@ function extractReachMetric(data: unknown): number | undefined {
   return reachEntry?.total_value?.value ?? reachEntry?.values?.[0]?.value;
 }
 
+/** One day's entry in a Graph API time-series insights metric. */
+interface TimeSeriesPoint {
+  end_time: string;
+  value: number;
+}
+
+/**
+ * `follower_count` as a `metric_type: "time_series"` metric returns the *daily net
+ * change* per day, not a running total (confirmed live: values were single-digit
+ * deltas like 4, -2, 8, not cumulative follower counts). Extracted separately from
+ * `extractReachMetric` since that one reads `total_value`, a different response shape.
+ */
+function extractTimeSeries(data: unknown, metricName: string): TimeSeriesPoint[] {
+  const entries = (data as { data?: unknown[] })?.data;
+  if (!Array.isArray(entries)) return [];
+  const metric = entries.find(
+    (entry): entry is { name: string; values?: TimeSeriesPoint[] } =>
+      typeof entry === "object" && entry !== null && (entry as { name?: string }).name === metricName
+  );
+  return metric?.values ?? [];
+}
+
 function toTopContentItem(item: IgMediaItem): TopContentItem {
   return {
     externalId: item.id,
@@ -199,6 +221,63 @@ export class ComposioProvider implements ContentDiscoveryProvider {
 
     return {
       data: insights,
+      source: this.id,
+      fetchedAt: new Date().toISOString(),
+      confidence: "verified",
+    };
+  }
+
+  /**
+   * Reconstructs a day-by-day follower total for the last `days` days from
+   * Instagram's own insights history — not from our own AccountSnapshot table,
+   * which only has data from whenever the account happened to get connected.
+   * This is what lets the growth chart show real history predating the connection
+   * (found live: Sina asked for exactly this after seeing a one-point chart the day
+   * after connecting). The Graph API gives daily *deltas*, not running totals, so
+   * `currentFollowers` (from the same getAccountInsights call) is walked backward:
+   * today's total minus each day's delta gives the previous day's total, and so on.
+   */
+  async getFollowerHistory(
+    currentFollowers: number,
+    days = 30
+  ): Promise<ProviderResult<{ date: string; followers: number }[]>> {
+    const client = getComposioClient();
+    if (!client) throw new Error("Composio client not configured");
+
+    const until = Math.floor(Date.now() / 1000);
+    const since = until - days * 24 * 3600;
+
+    const result = await client.tools.execute(INSTAGRAM_ACTIONS.getUserInsights, {
+      userId: LOCAL_COMPOSIO_USER_ID,
+      arguments: {
+        ig_user_id: "me",
+        metric: ["follower_count"],
+        period: "day",
+        metric_type: "time_series",
+        since,
+        until,
+      },
+      dangerouslySkipVersionCheck: true,
+    });
+    if (!result.successful) {
+      throw new Error(result.error ?? "INSTAGRAM_GET_USER_INSIGHTS (follower_count) failed");
+    }
+
+    const series = extractTimeSeries(result.data, "follower_count");
+
+    let runningTotal = currentFollowers;
+    const history = series
+      .slice()
+      .reverse() // walk backward from most recent to oldest
+      .map((point) => {
+        const entry = { date: point.end_time, followers: runningTotal };
+        runningTotal -= point.value;
+        return entry;
+      })
+      .reverse(); // back to chronological order for charting
+
+    return {
+      data: history,
       source: this.id,
       fetchedAt: new Date().toISOString(),
       confidence: "verified",

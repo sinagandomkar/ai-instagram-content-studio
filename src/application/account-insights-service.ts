@@ -45,6 +45,34 @@ export class AccountInsightsService {
       take: 90,
     });
 
+    // Our own AccountSnapshot history only starts from whenever the account happened
+    // to get connected — useless for "show me last month" the day after connecting.
+    // Instagram's own insights history goes back up to 30 days regardless, so prefer
+    // it as the base and layer our own (more frequent, e.g. today's) snapshots on top
+    // of whatever it doesn't cover. Non-fatal: falls back to snapshot-only history if
+    // this call fails for any reason (e.g. an account below Instagram's own threshold
+    // for this metric).
+    let growthHistory: { capturedAt: string; followers: number; engagementRate: number }[] = history.map(
+      (h) => ({ capturedAt: h.capturedAt.toISOString(), followers: h.followers, engagementRate: h.engagementRate })
+    );
+    try {
+      const followerHistory = await composioProvider.getFollowerHistory(result.data.followers);
+      const instagramPoints = followerHistory.data.map((p) => ({
+        capturedAt: p.date,
+        followers: p.followers,
+        engagementRate: 0,
+      }));
+      const lastInstagramDate = instagramPoints.at(-1)?.capturedAt;
+      const newerOwnPoints = lastInstagramDate
+        ? growthHistory.filter((p) => p.capturedAt > lastInstagramDate)
+        : growthHistory;
+      growthHistory = [...instagramPoints, ...newerOwnPoints].sort((a, b) =>
+        a.capturedAt.localeCompare(b.capturedAt)
+      );
+    } catch (error) {
+      console.error("Instagram follower history fetch failed (non-fatal, using local snapshots only):", error);
+    }
+
     // AI suggestions are a nice-to-have on top of real account data — a Gemini
     // hiccup (rate limit, transient 503, etc.; hit live while testing this) must
     // not take down the whole dashboard when the actual Instagram data is fine.
@@ -66,11 +94,7 @@ export class AccountInsightsService {
     return {
       connected: true,
       insights: result.data,
-      growthHistory: history.map((h) => ({
-        capturedAt: h.capturedAt.toISOString(),
-        followers: h.followers,
-        engagementRate: h.engagementRate,
-      })),
+      growthHistory,
       suggestions,
     };
   }
